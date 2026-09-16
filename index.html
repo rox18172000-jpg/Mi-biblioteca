@@ -12,8 +12,9 @@ main{padding:18px 24px 30px;max-width:1300px;margin:auto}.shelves{display:flex;f
 .modal{display:none;position:fixed;inset:0;background:#2d1d1688;z-index:10;align-items:center;justify-content:center;padding:16px}.card{background:var(--cream);border-radius:16px;padding:22px;max-width:580px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 18px 50px #0006}.card h2{margin-top:0;font-family:Georgia,serif}label{display:block;font-weight:bold;font-size:13px;margin:12px 0 5px}input,select,textarea{width:100%;padding:10px;border:1px solid #d8bb91;border-radius:8px;background:#fff;font:inherit}.row{display:flex;gap:10px}.row>*{flex:1}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.drop{border:2px dashed #d9ae65;border-radius:10px;padding:28px;text-align:center;color:#866f5e;cursor:pointer;position:relative}.drop input{display:block;position:absolute;inset:0;width:100%;height:100%;opacity:1;cursor:pointer}.status{font-size:13px;margin-top:12px;line-height:1.5}.ok{color:#347743}.err{color:#b32639}.progress{height:8px;background:#eadbc7;border-radius:9px;overflow:hidden;margin-top:8px}.progress i{display:block;height:100%;width:0;background:#699b72;transition:width .2s}
 #reader{display:none;position:fixed;inset:0;z-index:20;background:#241712eF;align-items:center;justify-content:center;flex-direction:column;gap:12px}.readerTop{position:absolute;right:18px;top:18px}.bookStage{width:min(930px,92vw);height:min(720px,78vh);display:flex;align-items:center;justify-content:center;perspective:1400px}.openBook{width:min(800px,88vw);height:min(570px,68vh);background:#fffaf0;box-shadow:0 25px 50px #0008;transform:rotateX(5deg);display:flex;overflow:hidden;border-radius:6px;transition:.7s}.openBook.start{transform:rotateX(62deg) scale(.72)}.page{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;overflow:auto;background:#fffdf7;border-right:1px solid #eadfcb}.page img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;image-rendering:auto}.readerCtl{display:flex;align-items:center;gap:12px;color:#fff}.readerCtl button{font-size:20px;width:42px;height:42px;padding:0}.readerCtl span{min-width:130px;text-align:center}.zoom{font-size:13px;color:#fff}
 @media(max-width:650px){main{padding:12px}.shelf{padding-left:8px;padding-right:8px}.rack{height:112px}.book{height:88px;width:20px;min-width:20px}.book span{font-size:8px;max-height:75px}.openBook{height:60vh}.page{font-size:12px}header{padding:12px}}
-</style></head><body>
-<header><div><h1>Biblioteca de Bolsillo</h1><div class="sub">Estantes de colores suaves y libros delgados</div></div><div class="tools"><span id="saveState" class="sub" style="align-self:center">Sin cambios</span><button class="green" id="addShelf">+ Estante</button><button id="addBook">+ Libro</button><button class="blue" id="importPdf">Importar PDF</button><button class="blue" id="exportBackup">Exportar copia</button><button id="importBackupBtn">Importar copia</button><input type="file" id="importBackupInput" accept="application/json" style="display:none"></div></header>
+</style><script src="https://accounts.google.com/gsi/client" async defer></script>
+</head><body>
+<header><div><h1>Biblioteca de Bolsillo</h1><div class="sub">Estantes de colores suaves y libros delgados</div></div><div class="tools"><span id="saveState" class="sub" style="align-self:center">Sin cambios</span><button class="green" id="addShelf">+ Estante</button><button id="addBook">+ Libro</button><button class="blue" id="importPdf">Importar PDF</button><button class="blue" id="exportBackup">Exportar copia</button><button id="importBackupBtn">Importar copia</button><input type="file" id="importBackupInput" accept="application/json" style="display:none"><button class="green" id="connectDrive">Conectar Google Drive</button></div></header>
 <main><div id="shelves" class="shelves"></div></main>
 <div class="modal" id="shelfModal"><div class="card"><h2>Nuevo estante</h2><label>Nombre</label><input id="shelfName" placeholder="Novelas, estudio, recetas..."><div class="actions"><button class="plain" data-close="shelfModal">Cancelar</button><button class="green" id="saveShelf">Crear</button></div></div></div>
 <div class="modal" id="bookModal"><div class="card"><h2>Nuevo libro</h2><div class="row"><div><label>Título</label><input id="bookTitle"></div><div><label>Autor</label><input id="bookAuthor"></div></div><label>Estante</label><select id="bookShelf"></select><label>Contenido</label><textarea id="bookText" rows="8" placeholder="Escribe el contenido del libro..."></textarea><div class="actions"><button class="plain" data-close="bookModal">Cancelar</button><button id="saveBook">Guardar</button></div></div></div>
@@ -64,6 +65,7 @@ async function save(){
   try{localStorage.setItem('biblioteca-state',JSON.stringify(record))}catch(e){console.warn('Respaldo local no disponible',e)}
   saveRunning=(async()=>{try{await put('state',record);setSaveState('Guardado',true)}catch(e){memoryState=record;setSaveState('Guardado local',true);console.warn('IndexedDB no disponible',e)}})();
   await saveRunning;
+  scheduleDriveSync();
 }
 function saveImmediately(){try{let record={id:'library',value:snapshot(),updatedAt:Date.now(),schema:2};localStorage.setItem('biblioteca-state',JSON.stringify(record))}catch(e){console.warn('No se pudo guardar al cerrar',e)}}
 async function load(){
@@ -91,16 +93,27 @@ function renderPage(page,scale=2.2){let base=page.getViewport({scale:1});let act
 async function openReader(b){reader.book=b;reader.index=0;reader.zoom=1;$('reader').style.display='flex';requestAnimationFrame(()=>$('openBook').classList.remove('start'));await drawReader()}
 async function drawReader(){let b=reader.book;if(!b)return;let total=typeof b.pages==='number'?b.pages:b.pages.length;$('pageA').innerHTML='';$('pageB').innerHTML='';if(b.pdf){let rec=await recoverPdf(b.pdf);if(!rec)throw Error('No se encontró el archivo PDF guardado. Importa nuevamente este PDF desde esta misma copia de la aplicación.');let pdf=await pdfjsLib.getDocument({data:rec.data.slice(0),disableWorker:true,useWorkerFetch:false,isEvalSupported:false}).promise;let draw=async(n,el)=>{if(n>=total)return;let page=await pdf.getPage(n+1),img=document.createElement('img');img.src=await renderPage(page,2.2);$(el).appendChild(img)};await draw(reader.index,'pageA');if(reader.index>0)await draw(reader.index+1,'pageB')}else{$('pageA').textContent=b.pages[reader.index]||'';if(reader.index>0)$('pageB').textContent=b.pages[reader.index+1]||''}let label=reader.index===0?'Portada / Página 1':('Páginas '+(reader.index+1)+'–'+Math.min(reader.index+2,total)+' de '+total);$('indicator').textContent=label;$('prev').disabled=reader.index===0;$('next').disabled=reader.index>=total-1;$('openBook').style.transform='rotateX(5deg) scale('+reader.zoom+')';$('zoomText').textContent=Math.round(reader.zoom*100)+'%'}
 $('prev').onclick=()=>{if(reader.index>0){reader.index=reader.index===1?0:Math.max(1,reader.index-2);drawReader()}};$('next').onclick=()=>{let b=reader.book,t=typeof b.pages==='number'?b.pages:b.pages.length;if(reader.index===0){reader.index=t>1?1:0}else if(reader.index<t-1){reader.index=Math.min(reader.index+2,t-1)}drawReader()};$('closeReader').onclick=()=>{$('openBook').classList.add('start');setTimeout(()=>hide('reader'),650)};$('zoomIn').onclick=()=>{reader.zoom=Math.min(1.8,reader.zoom+.1);drawReader()};$('zoomOut').onclick=()=>{reader.zoom=Math.max(.7,reader.zoom-.1);drawReader()};
+async function buildBackupPayload(){
+  const data={version:1,exportedAt:Date.now(),lib:snapshot(),pdfs:{}};
+  const pdfIds=[];
+  lib.shelves.forEach(s=>s.books.forEach(b=>{if(b.pdf)pdfIds.push(b.pdf)}));
+  for(const id of pdfIds){
+    const rec=await recoverPdf(id);
+    if(rec&&rec.data)data.pdfs[id]={name:rec.name,pages:rec.pages,data:bytesToBase64(rec.data)};
+  }
+  return data;
+}
+async function restoreFromPayload(data){
+  if(!data||!data.lib||!Array.isArray(data.lib.shelves))throw Error('El archivo no es una copia válida de esta biblioteca.');
+  if(data.pdfs)for(const id in data.pdfs){const p=data.pdfs[id];await persistPdf({id,data:base64ToBuffer(p.data),name:p.name,pages:p.pages})}
+  lib=data.lib;
+  await save();
+  render();
+}
 async function exportBackup(){
   setSaveState('Preparando copia…');
   try{
-    const data={version:1,exportedAt:Date.now(),lib:snapshot(),pdfs:{}};
-    const pdfIds=[];
-    lib.shelves.forEach(s=>s.books.forEach(b=>{if(b.pdf)pdfIds.push(b.pdf)}));
-    for(const id of pdfIds){
-      const rec=await recoverPdf(id);
-      if(rec&&rec.data)data.pdfs[id]={name:rec.name,pages:rec.pages,data:bytesToBase64(rec.data)};
-    }
+    const data=await buildBackupPayload();
     const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
@@ -121,13 +134,83 @@ $('importBackupInput').onchange=async(e)=>{
   try{
     const text=await file.text();
     const data=JSON.parse(text);
-    if(!data||!data.lib||!Array.isArray(data.lib.shelves))throw Error('El archivo no es una copia válida de esta biblioteca.');
-    if(data.pdfs)for(const id in data.pdfs){const p=data.pdfs[id];await persistPdf({id,data:base64ToBuffer(p.data),name:p.name,pages:p.pages})}
-    lib=data.lib;
-    await save();
-    render();
+    await restoreFromPayload(data);
     setSaveState('Copia importada',true);
   }catch(e){console.error(e);setSaveState('Error al importar');alert('No se pudo importar la copia: '+(e.message||e))}
+};
+const GOOGLE_CLIENT_ID='228118965564-6fftcrl48m926arnu6j12d5tvc8us593.apps.googleusercontent.com';
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
+const DRIVE_FILENAME='biblioteca-datos.json';
+let driveToken=null,driveFileId=null,driveTokenClient=null,driveSyncTimer=0,driveBusy=false;
+async function driveFetch(url,options={}){
+  options.headers=Object.assign({},options.headers,{Authorization:'Bearer '+driveToken});
+  const res=await fetch(url,options);
+  if(!res.ok){const t=await res.text().catch(()=>'');throw new Error('Drive API '+res.status+': '+t)}
+  return res;
+}
+async function ensureDriveFile(){
+  if(driveFileId)return driveFileId;
+  const q=encodeURIComponent(`name='${DRIVE_FILENAME}' and trashed=false`);
+  const res=await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`);
+  const data=await res.json();
+  if(data.files&&data.files.length){driveFileId=data.files[0].id}
+  else{
+    const createRes=await driveFetch('https://www.googleapis.com/drive/v3/files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:DRIVE_FILENAME,mimeType:'application/json'})});
+    const created=await createRes.json();driveFileId=created.id;
+  }
+  return driveFileId;
+}
+async function syncToDrive(){
+  if(!driveToken)return;
+  await ensureDriveFile();
+  const payload=await buildBackupPayload();
+  await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+}
+async function loadFromDriveIfNewer(){
+  if(!driveToken||!driveFileId)return;
+  const res=await driveFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
+  const text=await res.text();
+  if(!text)return;
+  let data;try{data=JSON.parse(text)}catch(e){return}
+  if(!data||!data.lib||!Array.isArray(data.lib.shelves))return;
+  let localTime=0;
+  try{const localRecord=await get('state','library');localTime=localRecord?.updatedAt||0}catch(e){}
+  const driveTime=data.exportedAt||0;
+  if(driveTime>localTime)await restoreFromPayload(data);
+}
+function scheduleDriveSync(){
+  if(!driveToken)return;
+  clearTimeout(driveSyncTimer);
+  driveSyncTimer=setTimeout(()=>{syncToDrive().then(()=>setSaveState('Sincronizado con Google Drive',true)).catch(e=>{console.warn('Fallo al sincronizar con Drive',e);setSaveState('Guardado (falló sync con Drive)')})},1500);
+}
+function initDriveClient(){
+  if(!window.google||!google.accounts||!google.accounts.oauth2)return null;
+  if(driveTokenClient)return driveTokenClient;
+  driveTokenClient=google.accounts.oauth2.initTokenClient({
+    client_id:GOOGLE_CLIENT_ID,
+    scope:DRIVE_SCOPE,
+    callback:async(resp)=>{
+      if(resp.error){setSaveState('Error al conectar Google Drive');alert('No se pudo conectar con Google Drive: '+resp.error);return}
+      driveToken=resp.access_token;
+      $('connectDrive').textContent='Drive conectado ✓';
+      if(driveBusy)return;
+      driveBusy=true;
+      setSaveState('Conectado, sincronizando con Drive…');
+      try{
+        await ensureDriveFile();
+        await loadFromDriveIfNewer();
+        await syncToDrive();
+        setSaveState('Sincronizado con Google Drive',true);
+      }catch(e){console.error(e);setSaveState('Error al sincronizar con Drive');alert('Hubo un problema sincronizando con Drive: '+(e.message||e))}
+      driveBusy=false;
+    }
+  });
+  return driveTokenClient;
+}
+$('connectDrive').onclick=()=>{
+  const client=initDriveClient();
+  if(!client){alert('Aún no carga el sistema de acceso de Google, espera unos segundos y vuelve a intentar.');return}
+  client.requestAccessToken({prompt:driveToken?'':'consent'});
 };
 (async()=>{try{await openDB()}catch(e){db=null;console.warn('IndexedDB no disponible; usando almacenamiento alternativo',e)}await load()})();
 </script></body></html>
